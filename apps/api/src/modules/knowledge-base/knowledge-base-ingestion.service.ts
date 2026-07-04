@@ -1,15 +1,32 @@
 import { Injectable, BadRequestException, ConflictException } from '@nestjs/common';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { DbService } from '../../db/db.service';
 import { knowledgeEntries } from '../../db/schema';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import * as cheerio from 'cheerio';
+import { randomUUID } from 'crypto';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10MB
 const CHUNK_MAX_CHARS = 1500;
+const MAX_SITEMAP_URLS = 5_000;
+
+export interface SitemapJob {
+  id: string;
+  status: 'running' | 'done' | 'error';
+  total: number;
+  processed: number;
+  imported: number;
+  skipped: number;
+  failed: number;
+  errors: string[];
+  startedAt: number;
+  finishedAt?: number;
+}
 
 @Injectable()
 export class KnowledgeBaseIngestionService {
+  private readonly sitemapJobs = new Map<string, SitemapJob>();
+
   constructor(
     private readonly db: DbService,
     private readonly kb: KnowledgeBaseService,
@@ -79,8 +96,8 @@ export class KnowledgeBaseIngestionService {
         category: dto.category ?? 'document',
         entryType: 'reference',
         agentKeys: dto.agentKeys,
-      siteKeys: dto.siteKeys ?? null,
-      excludedSiteKeys: dto.excludedSiteKeys ?? null,
+        siteKeys: dto.siteKeys ?? null,
+        excludedSiteKeys: dto.excludedSiteKeys ?? null,
         sourceType,
         parentDocId: parent.id,
       });
@@ -181,8 +198,8 @@ export class KnowledgeBaseIngestionService {
         category: dto.category ?? 'webpage',
         entryType: 'reference',
         agentKeys: dto.agentKeys,
-      siteKeys: dto.siteKeys ?? null,
-      excludedSiteKeys: dto.excludedSiteKeys ?? null,
+        siteKeys: dto.siteKeys ?? null,
+        excludedSiteKeys: dto.excludedSiteKeys ?? null,
         sourceType: 'link',
         sourceUrl: url,
         parentDocId: parent.id,
@@ -190,6 +207,142 @@ export class KnowledgeBaseIngestionService {
     }
 
     return { parentId: parent.id, chunks: chunks.length, totalChars: text.length, title: pageTitle };
+  }
+
+  // ─── Sitemap: background job ───────────────────────────────────────────────
+
+  async startSitemapJob(
+    source: { url?: string; xml?: string },
+    dto: { agentKeys?: string; category?: string; siteKeys?: string | null; excludedSiteKeys?: string | null },
+  ): Promise<{ jobId: string; total: number }> {
+    const urls = await this.extractSitemapUrls(source);
+
+    const jobId = randomUUID();
+    const job: SitemapJob = {
+      id: jobId,
+      status: 'running',
+      total: urls.length,
+      processed: 0,
+      imported: 0,
+      skipped: 0,
+      failed: 0,
+      errors: [],
+      startedAt: Date.now(),
+    };
+    this.sitemapJobs.set(jobId, job);
+
+    // Fire-and-forget — no await
+    this.runSitemapJob(jobId, urls, dto).catch(() => {
+      const j = this.sitemapJobs.get(jobId);
+      if (j) { j.status = 'error'; j.finishedAt = Date.now(); }
+    });
+
+    return { jobId, total: urls.length };
+  }
+
+  getSitemapJob(jobId: string): SitemapJob | undefined {
+    return this.sitemapJobs.get(jobId);
+  }
+
+  private async runSitemapJob(
+    jobId: string,
+    urls: string[],
+    dto: { agentKeys?: string; category?: string; siteKeys?: string | null; excludedSiteKeys?: string | null },
+  ): Promise<void> {
+    const job = this.sitemapJobs.get(jobId)!;
+
+    for (const url of urls) {
+      try {
+        await this.ingestLink(url, dto);
+        job.imported++;
+      } catch (err: any) {
+        if (err instanceof ConflictException) {
+          job.skipped++;
+        } else {
+          job.failed++;
+          const msg = err?.message ?? 'Unknown error';
+          if (job.errors.length < 20) job.errors.push(`${url}: ${msg}`);
+        }
+      }
+      job.processed++;
+    }
+
+    job.status = 'done';
+    job.finishedAt = Date.now();
+  }
+
+  private async extractSitemapUrls(source: { url?: string; xml?: string }): Promise<string[]> {
+    let xmlText: string;
+
+    if (source.xml) {
+      xmlText = Buffer.from(source.xml, 'base64').toString('utf-8');
+    } else if (source.url) {
+      if (!/^https?:\/\//i.test(source.url)) {
+        throw new BadRequestException('URL must start with http:// or https://');
+      }
+      try {
+        const axios = (await import('axios')).default;
+        const res = await axios.get(source.url, {
+          responseType: 'text',
+          timeout: 15_000,
+          maxContentLength: 10 * 1024 * 1024,
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CortexBot/1.0)' },
+        });
+        xmlText = res.data as string;
+      } catch (err: any) {
+        const msg = err?.response
+          ? `Server returned ${err.response.status}`
+          : err?.code === 'ECONNABORTED'
+          ? 'Request timed out'
+          : `Could not fetch sitemap: ${err?.message}`;
+        throw new BadRequestException(msg);
+      }
+    } else {
+      throw new BadRequestException('Either url or xml (base64) is required');
+    }
+
+    const $ = cheerio.load(xmlText, { xmlMode: true });
+    let urls: string[] = [];
+
+    // Sitemap index: fetch each child sitemap
+    const sitemapLocs = $('sitemapindex sitemap loc')
+      .map((_: number, el: any) => $(el).text().trim())
+      .get()
+      .filter(Boolean);
+
+    if (sitemapLocs.length > 0) {
+      const axios = (await import('axios')).default;
+      for (const sitemapUrl of sitemapLocs) {
+        if (urls.length >= MAX_SITEMAP_URLS) break;
+        try {
+          const res = await axios.get(sitemapUrl, {
+            responseType: 'text',
+            timeout: 10_000,
+            maxContentLength: 5 * 1024 * 1024,
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CortexBot/1.0)' },
+          });
+          const $child = cheerio.load(res.data as string, { xmlMode: true });
+          const childUrls = $child('url loc')
+            .map((_: number, el: any) => $child(el).text().trim())
+            .get()
+            .filter(Boolean);
+          urls.push(...childUrls);
+        } catch {
+          // skip unreadable child sitemaps
+        }
+      }
+    } else {
+      urls = $('url loc')
+        .map((_: number, el: any) => $(el).text().trim())
+        .get()
+        .filter(Boolean);
+    }
+
+    if (!urls.length) {
+      throw new BadRequestException('No URLs found in sitemap — check that the XML is a valid sitemap');
+    }
+
+    return urls.slice(0, MAX_SITEMAP_URLS);
   }
 
   // ─── Private extractors ────────────────────────────────────────────────────
