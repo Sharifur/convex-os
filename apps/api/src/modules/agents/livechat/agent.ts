@@ -466,10 +466,12 @@ export class LivechatAgent implements IAgent, OnModuleInit {
     // has no pricing, escalate to a human — we'd otherwise hallucinate prices.
     const PRICING_KEYWORDS = ['pricing', 'price', 'cost', 'how much', 'fee', 'subscription', 'plan', 'plans', 'license', 'tier', 'package', 'charge', 'rate'];
     const isPricingQuery = isSubstantiveQuestion && PRICING_KEYWORDS.some((k) => safeVisitorMessage.toLowerCase().includes(k));
-    const PRICE_PATTERN = /\$[\d,.]+|\d+\s*USD|regular license|extended license|\bplan\b|\btier\b|pricing/i;
+    const PRICE_PATTERN = /\$[\d,.]+|€[\d,.]+|£[\d,.]+|[\d,.]+\s*(USD|EUR|GBP)|regular license|extended license|\bplan\b|\btier\b|pricing|\bprice\b|\/mo\b|\/month\b|\/year\b/i;
+    const scopedDocs = alwaysOn.filter((e) => e.entryType === 'documentation');
     const hasPricingInKb =
       scopedCatalog.some((e) => PRICE_PATTERN.test(e.content)) ||
-      scopedReferences.some((e) => PRICE_PATTERN.test(e.content));
+      scopedReferences.some((e) => PRICE_PATTERN.test(e.content)) ||
+      scopedDocs.some((e) => PRICE_PATTERN.test(e.content));
 
     let pagePricingBlock = '';
     if (isPricingQuery && !hasPricingInKb) {
@@ -491,6 +493,7 @@ export class LivechatAgent implements IAgent, OnModuleInit {
       voiceProfile: alwaysOn.find((e) => e.entryType === 'voice_profile') ?? null,
       facts: alwaysOn.filter((e) => e.entryType === 'fact'),
       catalog: scopedCatalog,
+      documentation: scopedDocs,
       references: scopedReferences,
       positiveSamples: samples.filter((s) => s.polarity === 'positive'),
       negativeSamples: samples.filter((s) => s.polarity === 'negative'),
@@ -918,12 +921,14 @@ export class LivechatAgent implements IAgent, OnModuleInit {
         .replace(/\s+/g, ' ')
         .trim();
       // Check if page has any pricing signals at all
-      if (!/\$[\d,.]+|\d+\s*USD|regular license|extended license|\bpric/i.test(text)) return null;
+      const PRICE_SIG = /\$[\d,.]+|€[\d,.]+|£[\d,.]+|[\d,.]+\s*(USD|EUR|GBP)|regular license|extended license|\/mo\b|\/month\b|\/year\b|\bpric/i;
+      if (!PRICE_SIG.test(text)) return null;
       // Extract windows of text around price mentions
+      const PRICE_WORD = /\$[\d,.]+|€[\d,.]+|£[\d,.]+|[\d,.]+\s*(USD|EUR|GBP)|regular license|extended license|\/mo\b|\/month\b|\/year\b|\bpric\w*/i;
       const words = text.split(' ');
       const snippets: string[] = [];
       for (let i = 0; i < words.length; i++) {
-        if (/\$[\d,.]+|\d+\s*USD|regular license|extended license/i.test(words[i])) {
+        if (PRICE_WORD.test(words[i])) {
           const start = Math.max(0, i - 25);
           const end = Math.min(words.length, i + 25);
           snippets.push(words.slice(start, end).join(' '));

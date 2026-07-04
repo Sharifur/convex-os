@@ -14,6 +14,8 @@ export interface KbPromptBlockParams {
   facts: KnowledgeEntry[];
   /** Products / services / offers — rendered as a catalog the agent can pitch from. */
   catalog?: KnowledgeEntry[];
+  /** Always-on product documentation entries (how-it-works, pricing pages, feature docs). */
+  documentation?: KnowledgeEntry[];
   references: KnowledgeEntry[];
   positiveSamples: WritingSample[];
   negativeSamples: WritingSample[];
@@ -132,7 +134,7 @@ export class KnowledgeBaseService {
       .where(
         sql`${this.agentKeyWhere(agentKey)}
           AND ${this.siteKeyWhere(siteKey)}
-          AND entry_type IN ('reference', 'service', 'product', 'offer', 'product_qa')
+          AND entry_type IN ('reference', 'documentation', 'service', 'product', 'offer', 'product_qa')
           AND to_tsvector('english', title || ' ' || content) @@ plainto_tsquery('english', ${q})`,
       )
       .orderBy(desc(knowledgeEntries.priority))
@@ -179,7 +181,7 @@ export class KnowledgeBaseService {
       .where(
         sql`${this.agentKeyWhere(agentKey)}
           AND ${this.siteKeyWhere(siteKey)}
-          AND entry_type IN ('reference', 'service', 'product', 'offer', 'product_qa')
+          AND entry_type IN ('reference', 'documentation', 'service', 'product', 'offer', 'product_qa')
           AND embedding IS NOT NULL
           AND embedding <=> ${literal}::vector <= 0.40`,
       )
@@ -273,7 +275,7 @@ export class KnowledgeBaseService {
         .select()
         .from(knowledgeEntries)
         .where(
-          sql`${this.agentKeyWhere(agentKey)} AND ${this.siteKeyWhere(siteKey)} AND entry_type IN ('fact', 'voice_profile', 'product', 'service', 'offer')`,
+          sql`${this.agentKeyWhere(agentKey)} AND ${this.siteKeyWhere(siteKey)} AND entry_type IN ('fact', 'voice_profile', 'product', 'service', 'offer', 'documentation')`,
         )
         .orderBy(desc(knowledgeEntries.priority));
 
@@ -541,7 +543,7 @@ export class KnowledgeBaseService {
   // ─── KB prompt block builder ───────────────────────────────────────────────
 
   buildKbPromptBlock(params: KbPromptBlockParams): string {
-    const { voiceProfile, facts, catalog, references, positiveSamples, negativeSamples, rejections, threadHistory } = params;
+    const { voiceProfile, facts, catalog, documentation, references, positiveSamples, negativeSamples, rejections, threadHistory } = params;
     const parts: string[] = [];
     const catalogIds = new Set((catalog ?? []).map((e) => e.id));
     const dedupedReferences = references.filter((r) => !catalogIds.has(r.id));
@@ -578,6 +580,13 @@ export class KnowledgeBaseService {
       if (sections.length) {
         parts.push(`\n\n## What You Can Pitch\n${sections.join('\n\n')}\nMention these only when the visitor's question is relevant — never force a pitch.`);
       }
+    }
+
+    if (documentation && documentation.length) {
+      const docText = documentation.slice(0, 12)
+        .map(d => `### ${d.title}\n${trunc(d.content, 1200)}`)
+        .join('\n\n');
+      parts.push(`\n\n## Product Documentation (authoritative — use this to answer how-it-works and pricing questions)\n${docText}`);
     }
 
     if (dedupedReferences.length) {

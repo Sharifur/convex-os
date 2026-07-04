@@ -7,10 +7,11 @@ export const knowledgeEntries = pgTable('knowledge_entries', {
   content:     text('content').notNull(),
   category:    text('category').notNull().default('general'),
   entryType:   text('entry_type').notNull().default('reference'),
-  // 'reference'    — FTS-searched, injected when relevant to the message
-  // 'fact'         — always injected regardless of message content
-  // 'voice_profile'— global tone/style guide, always injected
-  // 'blocklist'    — pattern to avoid in LLM output; one rule per entry
+  // 'reference'     — FTS-searched, injected when relevant to the message
+  // 'fact'          — always injected regardless of message content
+  // 'voice_profile' — global tone/style guide, always injected
+  // 'blocklist'     — pattern to avoid in LLM output; one rule per entry
+  // 'documentation' — always injected for the active product; use for product docs / how-it-works / pricing pages imported via sitemap
   priority:    integer('priority').notNull().default(50), // 1=low … 100=critical
   agentKeys:   text('agent_keys'),     // null = all agents; "livechat,support" = specific
   // Livechat-only site scoping. CSV strings; null/empty in both = applies to all sites.

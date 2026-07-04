@@ -139,11 +139,12 @@ export class KnowledgeBaseController {
     category?: string;
     siteKeys?: string | null;
     excludedSiteKeys?: string | null;
+    entryType?: string;
   }) {
     if (!body.url && !body.xml) throw new BadRequestException('url or xml (base64) is required');
     return this.ingestion.startSitemapJob(
       { url: body.url, xml: body.xml },
-      { agentKeys: body.agentKeys, category: body.category, siteKeys: body.siteKeys ?? null, excludedSiteKeys: body.excludedSiteKeys ?? null },
+      { agentKeys: body.agentKeys, category: body.category, siteKeys: body.siteKeys ?? null, excludedSiteKeys: body.excludedSiteKeys ?? null, entryType: body.entryType },
     );
   }
 

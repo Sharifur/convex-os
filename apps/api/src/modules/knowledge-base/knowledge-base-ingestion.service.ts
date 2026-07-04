@@ -106,7 +106,7 @@ export class KnowledgeBaseIngestionService {
     return { parentId: parent.id, chunks: chunks.length, totalChars: text.length };
   }
 
-  async ingestLink(url: string, dto: { agentKeys?: string; category?: string; siteKeys?: string | null; excludedSiteKeys?: string | null }) {
+  async ingestLink(url: string, dto: { agentKeys?: string; category?: string; siteKeys?: string | null; excludedSiteKeys?: string | null; entryType?: string }) {
     if (!/^https?:\/\//i.test(url)) {
       throw new BadRequestException('URL must start with http:// or https://');
     }
@@ -179,11 +179,12 @@ export class KnowledgeBaseIngestionService {
     const pageTitle = $('title').text().trim() || new URL(url).hostname;
     const chunks = chunkText(text, CHUNK_MAX_CHARS);
 
+    const resolvedEntryType = dto.entryType ?? 'reference';
     const parent = await this.kb.createEntry({
       title: pageTitle,
       content: text.slice(0, 200) + (text.length > 200 ? '…' : ''),
       category: dto.category ?? 'webpage',
-      entryType: 'reference',
+      entryType: resolvedEntryType,
       agentKeys: dto.agentKeys,
       siteKeys: dto.siteKeys ?? null,
       excludedSiteKeys: dto.excludedSiteKeys ?? null,
@@ -196,7 +197,7 @@ export class KnowledgeBaseIngestionService {
         title: `${pageTitle} [part ${i + 1}]`,
         content: chunks[i],
         category: dto.category ?? 'webpage',
-        entryType: 'reference',
+        entryType: resolvedEntryType,
         agentKeys: dto.agentKeys,
         siteKeys: dto.siteKeys ?? null,
         excludedSiteKeys: dto.excludedSiteKeys ?? null,
@@ -213,7 +214,7 @@ export class KnowledgeBaseIngestionService {
 
   async startSitemapJob(
     source: { url?: string; xml?: string },
-    dto: { agentKeys?: string; category?: string; siteKeys?: string | null; excludedSiteKeys?: string | null },
+    dto: { agentKeys?: string; category?: string; siteKeys?: string | null; excludedSiteKeys?: string | null; entryType?: string },
   ): Promise<{ jobId: string; total: number }> {
     const urls = await this.extractSitemapUrls(source);
 
@@ -231,6 +232,9 @@ export class KnowledgeBaseIngestionService {
     };
     this.sitemapJobs.set(jobId, job);
 
+    // Default sitemap imports to 'documentation' — always-on context for the active product
+    if (!dto.entryType) dto.entryType = 'documentation';
+
     // Fire-and-forget — no await
     this.runSitemapJob(jobId, urls, dto).catch(() => {
       const j = this.sitemapJobs.get(jobId);
@@ -247,7 +251,7 @@ export class KnowledgeBaseIngestionService {
   private async runSitemapJob(
     jobId: string,
     urls: string[],
-    dto: { agentKeys?: string; category?: string; siteKeys?: string | null; excludedSiteKeys?: string | null },
+    dto: { agentKeys?: string; category?: string; siteKeys?: string | null; excludedSiteKeys?: string | null; entryType?: string },
   ): Promise<void> {
     const job = this.sitemapJobs.get(jobId)!;
 

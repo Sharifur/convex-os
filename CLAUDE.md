@@ -39,12 +39,15 @@
 |--------|-------|--------|----------|--------|-------------|
 | CX-007 | Lock AI replies to the product the visitor is viewing | DONE | HIGH | ~45k | Bot quoted SafeCart's price to a visitor on the Influstar page. Root cause: `getAlwaysOnContext` loads ALL site products/offers and `buildKbPromptBlock` renders them side-by-side, so the model can grab the wrong product's pricing. Fix: resolve the active product from the current page (title + sourceUrl) and strip sibling-product entries from catalog/references at the data layer (template-independent), pin PRODUCT LOCK to the active product. Decisions: stay locked to current product (siblings only if visitor names them); match by title + sourceUrl. |
 | CX-008 | Sitemap import with background job + polling | DONE | MED | ~35k | KB import tab gains a 3rd "Sitemap" mode. Accepts a sitemap URL or uploaded XML file (handles sitemap index nesting). Backend parses URLs synchronously, returns jobId immediately, processes up to 5,000 URLs in the background. Frontend polls every 2s and shows a live progress bar with imported/skipped/failed counts. |
+| CX-009 | Add `documentation` KB type + fix pricing/how-it-works escalation | DONE | HIGH | ~25k | New entry type `documentation` — always injected into AI context for the active product (no search ranking required). Fixes: (1) sitemap import defaults to `documentation`; (2) `hasPricingInKb` also checks documentation entries; (3) `PRICE_PATTERN` extended to EUR/GBP/per-month formats; (4) `fetchPagePricingContext` snippet extractor fixed to catch "pricing" keyword windows (was matching pric in gate check but not in extractor). |
 
 ### Sprint Stats
-- Total: 2  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 2  /  BLOCKED: 0
-- Tokens: ~80k total
+- Total: 3  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 3  /  BLOCKED: 0
+- Tokens: ~105k total
 
 ### Notes
 - AI reply pipeline: `apps/api/src/modules/agents/livechat/agent.ts` (`handleVisitorMessage`)
 - KB retrieval/render: `apps/api/src/modules/knowledge-base/knowledge-base.service.ts` (`searchEntries`, `getAlwaysOnContext`, `buildKbPromptBlock`)
 - Product lock helpers + scoping live in `agent.ts` (`resolveActiveProduct`, `scopeEntriesToProduct`, `productPrimaryName`).
+- `documentation` type: `schema.ts` comment, `getAlwaysOnContext` IN list, `buildKbPromptBlock` `## Product Documentation` section (1200 chars/entry, max 12).
+- Sitemap import: `knowledge-base-ingestion.service.ts` `startSitemapJob` defaults `entryType='documentation'`; frontend `KnowledgeBasePage.tsx` shows type selector.
