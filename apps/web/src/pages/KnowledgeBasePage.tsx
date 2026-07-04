@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { BookOpen, Plus, Trash2, Edit2, X, Upload, Link, ChevronDown, ChevronRight, FileText, Globe, Code, Layers, Loader2, Map } from 'lucide-react';
+import { BookOpen, Plus, Trash2, Edit2, X, Upload, Link, ChevronDown, ChevronRight, FileText, Globe, Code, Layers, Loader2, Map as MapIcon } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { KbFrameworkContent } from './KbFrameworkPage';
 
@@ -1405,7 +1405,7 @@ function ImportTab({ token }: { token: string }) {
               : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
           }`}
         >
-          <Map className="w-4 h-4" />
+          <MapIcon className="w-4 h-4" />
           Sitemap
           <span className={`text-xs ${importType === 'sitemap' ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
             bulk crawl
