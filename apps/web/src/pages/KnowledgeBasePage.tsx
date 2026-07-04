@@ -5,7 +5,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { KbFrameworkContent } from './KbFrameworkPage';
 
 const KB_AGENTS = ['livechat', 'support', 'whatsapp', 'email_manager', 'linkedin', 'reddit', 'social', 'shorts'];
-const ENTRY_TYPES = ['reference', 'fact', 'voice_profile', 'blocklist', 'product', 'service', 'offer', 'product_qa'];
+const ENTRY_TYPES = ['reference', 'documentation', 'fact', 'voice_profile', 'blocklist', 'product', 'service', 'offer', 'product_qa'];
 const CATEGORIES = ['general', 'product', 'service', 'policy', 'faq', 'document', 'webpage', 'other'];
 
 function parseAgentKeys(csv: string): string[] {
@@ -230,6 +230,7 @@ async function apiFetch(token: string, path: string, opts?: RequestInit) {
 function typeBadge(type: string) {
   const map: Record<string, string> = {
     reference: 'bg-blue-500/15 text-blue-400',
+    documentation: 'bg-sky-500/15 text-sky-400',
     fact: 'bg-amber-500/15 text-amber-400',
     voice_profile: 'bg-purple-500/15 text-purple-400',
     blocklist: 'bg-red-500/15 text-red-400',
@@ -256,7 +257,7 @@ function sourceBadge(type: string) {
 
 function AiPreviewBlock({ content, entryType }: { content: string; entryType: string }) {
   const [open, setOpen] = useState(false);
-  const isAlwaysOn = ['product', 'service', 'offer'].includes(entryType);
+  const isAlwaysOn = ['product', 'service', 'offer', 'documentation', 'fact'].includes(entryType);
   const limit = isAlwaysOn ? 500 : 800;
   const preview = content.slice(0, limit);
   const truncated = content.length > limit;
@@ -358,7 +359,8 @@ function EntryModal({ entry, onClose, onSave, token }: {
                 value={form.entryType}
                 onChange={e => setForm(f => ({ ...f, entryType: e.target.value }))}
               >
-                <option value="reference">Reference (FTS searched)</option>
+                <option value="reference">Reference (search-retrieved)</option>
+                <option value="documentation">Documentation (always-on for product)</option>
                 <option value="fact">Always-On Fact</option>
                 <option value="voice_profile">Voice Profile</option>
                 <option value="blocklist">Blocklist Rule</option>
@@ -1236,6 +1238,7 @@ function ImportTab({ token }: { token: string }) {
   const [sitemapFile, setSitemapFile] = useState<File | null>(null);
   const [sitemapAgentKeys, setSitemapAgentKeys] = useState('');
   const [sitemapCategory, setSitemapCategory] = useState('webpage');
+  const [sitemapEntryType, setSitemapEntryType] = useState<'documentation' | 'reference'>('documentation');
   const [sitemapSiteKeys, setSitemapSiteKeys] = useState('');
   const [sitemapExcludedSiteKeys, setSitemapExcludedSiteKeys] = useState('');
   const [sitemapJobId, setSitemapJobId] = useState<string | null>(null);
@@ -1324,6 +1327,7 @@ function ImportTab({ token }: { token: string }) {
       let body: Record<string, any> = {
         agentKeys: sitemapAgentKeys || undefined,
         category: sitemapCategory,
+        entryType: sitemapEntryType,
         siteKeys: sitemapSiteKeys || undefined,
         excludedSiteKeys: sitemapExcludedSiteKeys || undefined,
       };
@@ -1600,6 +1604,16 @@ function ImportTab({ token }: { token: string }) {
           )}
 
           <p className="text-xs text-muted-foreground">Supports standard sitemaps and sitemap index files. Up to 5,000 URLs — processed in the background.</p>
+
+          <div className="space-y-1">
+            <select className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none" value={sitemapEntryType} onChange={e => setSitemapEntryType(e.target.value as 'documentation' | 'reference')}>
+              <option value="documentation">Documentation — always-on for product (how-it-works, pricing, features)</option>
+              <option value="reference">Reference — search-retrieved only</option>
+            </select>
+            {sitemapEntryType === 'documentation' && (
+              <p className="text-xs text-muted-foreground">Always injected into AI context when visitor is on the matching product page — no search ranking needed.</p>
+            )}
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <AgentMultiSelect value={sitemapAgentKeys} onChange={(next) => { setSitemapAgentKeys(next); if (!parseAgentKeys(next).includes('livechat')) { setSitemapSiteKeys(''); setSitemapExcludedSiteKeys(''); } }} placeholder="Agents (optional)" />
