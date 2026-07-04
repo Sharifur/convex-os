@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { BookOpen, Plus, Trash2, Edit2, X, Upload, Link, ChevronDown, ChevronRight, FileText, Globe, Code, Layers, Loader2 } from 'lucide-react';
+import { BookOpen, Plus, Trash2, Edit2, X, Upload, Link, ChevronDown, ChevronRight, FileText, Globe, Code, Layers, Loader2, Map } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { KbFrameworkContent } from './KbFrameworkPage';
 
@@ -247,6 +247,7 @@ function sourceBadge(type: string) {
     docx: 'bg-indigo-500/15 text-indigo-400',
     md: 'bg-green-500/15 text-green-400',
     link: 'bg-cyan-500/15 text-cyan-400',
+    sitemap: 'bg-amber-500/15 text-amber-400',
   };
   return map[type] ?? 'bg-muted text-muted-foreground';
 }
@@ -1181,7 +1182,8 @@ function SamplesTab({ token }: { token: string }) {
 function ImportTab({ token }: { token: string }) {
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [importType, setImportType] = useState<'document' | 'url'>('document');
+  const sitemapFileRef = useRef<HTMLInputElement>(null);
+  const [importType, setImportType] = useState<'document' | 'url' | 'sitemap'>('document');
 
   const [files, setFiles] = useState<File[]>([]);
   const [fileAgentKeys, setFileAgentKeys] = useState('');
@@ -1228,6 +1230,18 @@ function ImportTab({ token }: { token: string }) {
   const [linking, setLinking] = useState(false);
   const [linkResult, setLinkResult] = useState<{ chunks: number; title?: string } | null>(null);
   const [linkError, setLinkError] = useState('');
+
+  const [sitemapMode, setSitemapMode] = useState<'url' | 'file'>('url');
+  const [sitemapUrl, setSitemapUrl] = useState('');
+  const [sitemapFile, setSitemapFile] = useState<File | null>(null);
+  const [sitemapAgentKeys, setSitemapAgentKeys] = useState('');
+  const [sitemapCategory, setSitemapCategory] = useState('webpage');
+  const [sitemapSiteKeys, setSitemapSiteKeys] = useState('');
+  const [sitemapExcludedSiteKeys, setSitemapExcludedSiteKeys] = useState('');
+  const [sitemapJobId, setSitemapJobId] = useState<string | null>(null);
+  const [sitemapJob, setSitemapJob] = useState<{ status: string; total: number; processed: number; imported: number; skipped: number; failed: number; errors: string[] } | null>(null);
+  const [sitemapError, setSitemapError] = useState('');
+  const sitemapPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { data: imports = [] } = useQuery<any[]>({
     queryKey: ['kb-imports'],
@@ -1302,6 +1316,55 @@ function ImportTab({ token }: { token: string }) {
     }
   }
 
+  async function handleSitemapImport() {
+    setSitemapError(''); setSitemapJob(null); setSitemapJobId(null);
+    if (sitemapPollRef.current) clearInterval(sitemapPollRef.current);
+
+    try {
+      let body: Record<string, any> = {
+        agentKeys: sitemapAgentKeys || undefined,
+        category: sitemapCategory,
+        siteKeys: sitemapSiteKeys || undefined,
+        excludedSiteKeys: sitemapExcludedSiteKeys || undefined,
+      };
+
+      if (sitemapMode === 'url') {
+        if (!sitemapUrl.trim()) return;
+        body.url = sitemapUrl.trim();
+      } else {
+        if (!sitemapFile) return;
+        const buf = await sitemapFile.arrayBuffer();
+        body.xml = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      }
+
+      const result = await apiFetch(token, '/knowledge-base/ingest/sitemap', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+
+      setSitemapJobId(result.jobId);
+      setSitemapJob({ status: 'running', total: result.total, processed: 0, imported: 0, skipped: 0, failed: 0, errors: [] });
+
+      // Poll every 2s until done
+      sitemapPollRef.current = setInterval(async () => {
+        try {
+          const job = await apiFetch(token, `/knowledge-base/ingest/sitemap/jobs/${result.jobId}`);
+          setSitemapJob(job);
+          if (job.status === 'done' || job.status === 'error') {
+            clearInterval(sitemapPollRef.current!);
+            sitemapPollRef.current = null;
+            qc.invalidateQueries({ queryKey: ['kb-imports', 'kb-entries'] });
+          }
+        } catch {
+          clearInterval(sitemapPollRef.current!);
+          sitemapPollRef.current = null;
+        }
+      }, 2000);
+    } catch (err: any) {
+      setSitemapError(err.message ?? 'Import failed');
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Type selector */}
@@ -1332,6 +1395,20 @@ function ImportTab({ token }: { token: string }) {
           URL
           <span className={`text-xs ${importType === 'url' ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
             web page / article
+          </span>
+        </button>
+        <button
+          onClick={() => { setImportType('sitemap'); setSitemapError(''); }}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors ${
+            importType === 'sitemap'
+              ? 'bg-primary text-primary-foreground'
+              : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
+          }`}
+        >
+          <Map className="w-4 h-4" />
+          Sitemap
+          <span className={`text-xs ${importType === 'sitemap' ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+            bulk crawl
           </span>
         </button>
       </div>
@@ -1471,6 +1548,116 @@ function ImportTab({ token }: { token: string }) {
             className="w-full py-2 bg-primary text-primary-foreground text-sm rounded-lg hover:opacity-90 disabled:opacity-50"
           >
             {linking ? 'Fetching…' : 'Import URL'}
+          </button>
+        </div>
+      )}
+
+      {/* Sitemap import panel */}
+      {importType === 'sitemap' && (
+        <div className="bg-card border border-border rounded-xl p-5 space-y-3">
+          {/* Mode toggle */}
+          <div className="flex gap-1 bg-muted/40 rounded-lg p-1">
+            <button
+              onClick={() => { setSitemapMode('url'); setSitemapFile(null); }}
+              className={`flex-1 py-1.5 rounded text-xs font-medium transition-colors ${sitemapMode === 'url' ? 'bg-card shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              Sitemap URL
+            </button>
+            <button
+              onClick={() => { setSitemapMode('file'); setSitemapUrl(''); }}
+              className={`flex-1 py-1.5 rounded text-xs font-medium transition-colors ${sitemapMode === 'file' ? 'bg-card shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              Upload XML
+            </button>
+          </div>
+
+          {sitemapMode === 'url' ? (
+            <input
+              className="w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              placeholder="https://yoursite.com/sitemap.xml"
+              value={sitemapUrl}
+              onChange={e => { setSitemapUrl(e.target.value); setSitemapError(''); }}
+            />
+          ) : (
+            <div
+              className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
+              onClick={() => sitemapFileRef.current?.click()}
+            >
+              <Upload className="w-6 h-6 mx-auto mb-2 text-muted-foreground" />
+              {sitemapFile ? (
+                <p className="text-sm font-medium">{sitemapFile.name}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground">Click to choose sitemap .xml file</p>
+              )}
+              <input
+                ref={sitemapFileRef}
+                type="file"
+                accept=".xml,text/xml,application/xml"
+                className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) { setSitemapFile(f); setSitemapError(''); } }}
+              />
+            </div>
+          )}
+
+          <p className="text-xs text-muted-foreground">Supports standard sitemaps and sitemap index files. Up to 5,000 URLs — processed in the background.</p>
+
+          <div className="grid grid-cols-2 gap-3">
+            <AgentMultiSelect value={sitemapAgentKeys} onChange={(next) => { setSitemapAgentKeys(next); if (!parseAgentKeys(next).includes('livechat')) { setSitemapSiteKeys(''); setSitemapExcludedSiteKeys(''); } }} placeholder="Agents (optional)" />
+            <select className="bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none" value={sitemapCategory} onChange={e => setSitemapCategory(e.target.value)}>
+              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+
+          {parseAgentKeys(sitemapAgentKeys).includes('livechat') && (
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Live Chat site scope</label>
+              <LivechatSiteScopeEditor
+                token={token}
+                siteKeys={sitemapSiteKeys}
+                excludedSiteKeys={sitemapExcludedSiteKeys}
+                onChange={(next) => { setSitemapSiteKeys(next.siteKeys); setSitemapExcludedSiteKeys(next.excludedSiteKeys); }}
+              />
+            </div>
+          )}
+
+          {sitemapError && <p className="text-xs text-destructive">{sitemapError}</p>}
+
+          {/* Progress */}
+          {sitemapJob && (
+            <div className="bg-muted/30 rounded-lg p-3 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium">
+                  {sitemapJob.status === 'done' ? 'Done' : `Importing… ${sitemapJob.processed} / ${sitemapJob.total}`}
+                </span>
+                <span className="text-muted-foreground">
+                  {sitemapJob.imported} imported · {sitemapJob.skipped} skipped · {sitemapJob.failed} failed
+                </span>
+              </div>
+              <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${sitemapJob.status === 'done' ? 'bg-green-500' : 'bg-primary'}`}
+                  style={{ width: `${sitemapJob.total > 0 ? Math.round((sitemapJob.processed / sitemapJob.total) * 100) : 0}%` }}
+                />
+              </div>
+              {sitemapJob.errors.length > 0 && (
+                <details className="text-xs text-destructive">
+                  <summary className="cursor-pointer">{sitemapJob.errors.length} error{sitemapJob.errors.length === 1 ? '' : 's'}</summary>
+                  <ul className="mt-1 space-y-0.5 list-disc pl-4">
+                    {sitemapJob.errors.map((e, i) => <li key={i} className="truncate">{e}</li>)}
+                  </ul>
+                </details>
+              )}
+            </div>
+          )}
+
+          <button
+            onClick={handleSitemapImport}
+            disabled={sitemapJob?.status === 'running' || (sitemapMode === 'url' ? !sitemapUrl.trim() : !sitemapFile)}
+            className="w-full py-2 bg-primary text-primary-foreground text-sm rounded-lg hover:opacity-90 disabled:opacity-50"
+          >
+            {sitemapJob?.status === 'running' ? (
+              <span className="flex items-center justify-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Processing…</span>
+            ) : 'Start Sitemap Import'}
           </button>
         </div>
       )}

@@ -131,6 +131,29 @@ export class KnowledgeBaseController {
     });
   }
 
+  @Post('ingest/sitemap')
+  async startSitemapJob(@Body() body: {
+    url?: string;
+    xml?: string;
+    agentKeys?: string;
+    category?: string;
+    siteKeys?: string | null;
+    excludedSiteKeys?: string | null;
+  }) {
+    if (!body.url && !body.xml) throw new BadRequestException('url or xml (base64) is required');
+    return this.ingestion.startSitemapJob(
+      { url: body.url, xml: body.xml },
+      { agentKeys: body.agentKeys, category: body.category, siteKeys: body.siteKeys ?? null, excludedSiteKeys: body.excludedSiteKeys ?? null },
+    );
+  }
+
+  @Get('ingest/sitemap/jobs/:jobId')
+  getSitemapJob(@Param('jobId') jobId: string) {
+    const job = this.ingestion.getSitemapJob(jobId);
+    if (!job) throw new NotFoundException('Job not found');
+    return job;
+  }
+
   @Post('ingest/document')
   async ingestDocument(@Body() body: {
     filename: string;
