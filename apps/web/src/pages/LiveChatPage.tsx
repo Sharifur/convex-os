@@ -3117,10 +3117,10 @@ function MessageBubble({
           <div className="flex items-center justify-end gap-1 mt-0.5 pr-1">
             <span className="text-[10px] text-muted-foreground">{formatMessageTime(message.createdAt)}</span>
             {message.metadata?.sentViaEmail && (
-              <Mail className="w-3 h-3 text-blue-400 shrink-0" title="Delivered via email" />
+              <span title="Delivered via email"><Mail className="w-3 h-3 text-blue-400 shrink-0" /></span>
             )}
             {message.seenAt
-              ? <CheckCheck className="w-3.5 h-3.5 text-green-500 shrink-0" title={message.metadata?.sentViaEmail ? 'Email opened' : 'Seen'} />
+              ? <span title={message.metadata?.sentViaEmail ? 'Email opened' : 'Seen'}><CheckCheck className="w-3.5 h-3.5 text-green-500 shrink-0" /></span>
               : <Check className="w-3.5 h-3.5 text-muted-foreground/50 shrink-0" />
             }
             {!translation && onTranslate && (
