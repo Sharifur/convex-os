@@ -1,7 +1,8 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DbService } from '../../../db/db.service';
-import { livechatSessions } from './schema';
+import { livechatSessions, livechatMessages } from './schema';
+import { inArray, isNull } from 'drizzle-orm';
 import { eq } from 'drizzle-orm';
 import { LivechatService } from './livechat.service';
 import { SesService } from '../../ses/ses.service';
@@ -52,15 +53,22 @@ export class LivechatInactivityService implements OnApplicationBootstrap, OnAppl
     const resendCutoff = new Date(now.getTime() - RESEND_COOLDOWN_MS);
     const messageWindow = new Date(now.getTime() - RECENT_MESSAGES_WINDOW_MS);
 
-    // Find open sessions where: visitor has email, visitor gone 3+ min, no email recently sent,
-    // AND there's a recent agent/bot message the visitor may have missed.
+    // Find open sessions where: visitor has email, visitor gone 3+ min (no recent visitor
+    // message), no email recently sent, AND there's a recent agent/operator reply the
+    // visitor may have missed. Use last visitor message time — not last_seen_at — because
+    // operator replies must not reset the visitor absence clock.
     const rows = await this.db.db.execute(sql`
       SELECT s.id, s.visitor_email, s.visitor_name
       FROM livechat_sessions s
       WHERE s.status = 'open'
         AND s.visitor_email IS NOT NULL
-        AND s.last_seen_at < ${inactiveThreshold.toISOString()}
         AND (s.inactivity_email_sent_at IS NULL OR s.inactivity_email_sent_at < ${resendCutoff.toISOString()})
+        AND NOT EXISTS (
+          SELECT 1 FROM livechat_messages m
+          WHERE m.session_id = s.id
+            AND m.role = 'visitor'
+            AND m.created_at > ${inactiveThreshold.toISOString()}
+        )
         AND EXISTS (
           SELECT 1 FROM livechat_messages m
           WHERE m.session_id = s.id
@@ -105,11 +113,26 @@ export class LivechatInactivityService implements OnApplicationBootstrap, OnAppl
     const replyTo = (await this.inbound.buildReplyTo(sessionId)) ?? undefined;
 
     const brandColor = site.brandColor || '#2563eb';
+    const appBaseUrl = (await this.settings.getDecrypted('app_base_url'))?.trim().replace(/\/+$/, '') || null;
+    const pixelUrl = appBaseUrl ? `${appBaseUrl}/api/livechat/session/${encodeURIComponent(sessionId)}/email-pixel` : null;
+
     const subject = `You have a message from ${botName}`;
     const textBody = this.buildText({ visitorLabel, botName, messages: recentMsgs });
-    const htmlBody = this.buildHtml({ visitorLabel, botName, brandColor, messages: recentMsgs });
+    const htmlBody = this.buildHtml({ visitorLabel, botName, brandColor, messages: recentMsgs, pixelUrl });
 
     await this.ses.sendEmail({ to: visitorEmail, from: fromAddress, subject, textBody, htmlBody, replyTo });
+
+    // Stamp agent/bot messages as sentViaEmail so the operator sees the email icon
+    // and the pixel endpoint can mark them as seen when the visitor opens the email.
+    const agentMsgIds = recentMsgs
+      .filter((m) => m.role === 'agent' || m.role === 'operator')
+      .map((m) => m.id);
+    if (agentMsgIds.length) {
+      await this.db.db
+        .update(livechatMessages)
+        .set({ metadata: sql`COALESCE(${livechatMessages.metadata}, '{}'::jsonb) || '{"sentViaEmail":true}'::jsonb` })
+        .where(inArray(livechatMessages.id, agentMsgIds));
+    }
 
     await this.db.db
       .update(livechatSessions)
@@ -452,7 +475,7 @@ Return ONLY the JSON array.`;
     return lines.join('\n');
   }
 
-  private buildHtml(input: { visitorLabel: string; botName: string; brandColor: string; messages: { role: string; content: string; createdAt: Date }[] }): string {
+  private buildHtml(input: { visitorLabel: string; botName: string; brandColor: string; messages: { role: string; content: string; createdAt: Date }[]; pixelUrl?: string | null }): string {
     const rows = input.messages.map((m) => {
       const isVisitor = m.role === 'visitor';
       const speaker = isVisitor ? input.visitorLabel : m.role === 'operator' ? 'Support' : input.botName;
@@ -467,6 +490,9 @@ Return ONLY the JSON array.`;
 </td></tr>`;
     }).join('');
 
+    const pixel = input.pixelUrl
+      ? `<img src="${input.pixelUrl}" width="1" height="1" style="display:block;width:1px;height:1px;border:0;" alt="" />`
+      : '';
     return `<!DOCTYPE html><html><body style="margin:0;padding:24px;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
 <table cellpadding="0" cellspacing="0" width="100%" style="max-width:580px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.05);">
   <tr><td style="padding:18px 22px;background:${input.brandColor};color:#fff;">
@@ -477,6 +503,6 @@ Return ONLY the JSON array.`;
   <tr><td style="padding:14px 22px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px;">
     Reply to this email to continue your conversation — your reply will be added to the chat automatically.
   </td></tr>
-</table></body></html>`;
+</table>${pixel}</body></html>`;
   }
 }
