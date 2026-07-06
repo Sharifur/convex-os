@@ -484,14 +484,24 @@ export class LivechatService implements OnModuleInit {
       .limit(1);
 
     if (session) {
-      await this.db.db
-        .update(livechatSessions)
-        .set({ lastSeenAt: new Date() })
-        .where(eq(livechatSessions.id, input.sessionId));
-      await this.db.db
-        .update(livechatVisitors)
-        .set({ totalMessages: sql`${livechatVisitors.totalMessages} + 1`, lastSeenAt: new Date() })
-        .where(eq(livechatVisitors.id, session.visitorPk));
+      // Only visitor messages update lastSeenAt — operator/agent replies must not
+      // reset the presence timestamp or they trigger false "visitor is online" state
+      // and block the inactivity email that notifies the visitor of a new reply.
+      if (input.role === 'visitor') {
+        await this.db.db
+          .update(livechatSessions)
+          .set({ lastSeenAt: new Date() })
+          .where(eq(livechatSessions.id, input.sessionId));
+        await this.db.db
+          .update(livechatVisitors)
+          .set({ totalMessages: sql`${livechatVisitors.totalMessages} + 1`, lastSeenAt: new Date() })
+          .where(eq(livechatVisitors.id, session.visitorPk));
+      } else {
+        await this.db.db
+          .update(livechatVisitors)
+          .set({ totalMessages: sql`${livechatVisitors.totalMessages} + 1` })
+          .where(eq(livechatVisitors.id, session.visitorPk));
+      }
 
       if (session.contactId && input.role === 'visitor') {
         await this.contactsSvc
@@ -526,6 +536,22 @@ export class LivechatService implements OnModuleInit {
           inArray(livechatMessages.id, messageIds),
           eq(livechatMessages.sessionId, sessionId),
           sql`${livechatMessages.seenAt} IS NULL`,
+        ),
+      )
+      .returning({ id: livechatMessages.id });
+    return updated.map((r) => r.id);
+  }
+
+  async markEmailOpenedForSession(sessionId: string): Promise<string[]> {
+    const now = new Date();
+    const updated = await this.db.db
+      .update(livechatMessages)
+      .set({ seenAt: now })
+      .where(
+        and(
+          eq(livechatMessages.sessionId, sessionId),
+          sql`${livechatMessages.metadata}->>'sentViaEmail' = 'true'`,
+          isNull(livechatMessages.seenAt),
         ),
       )
       .returning({ id: livechatMessages.id });

@@ -172,7 +172,7 @@ interface MessageRow {
   pendingApproval?: boolean;
   replyToId?: string | null;
   replyToContent?: string | null;
-  metadata?: { kbSources?: KbSource[] } | null;
+  metadata?: { kbSources?: KbSource[]; sentViaEmail?: boolean } | null;
 }
 
 interface PageContext {
@@ -3116,8 +3116,11 @@ function MessageBubble({
         {!isPending && (
           <div className="flex items-center justify-end gap-1 mt-0.5 pr-1">
             <span className="text-[10px] text-muted-foreground">{formatMessageTime(message.createdAt)}</span>
+            {message.metadata?.sentViaEmail && (
+              <Mail className="w-3 h-3 text-blue-400 shrink-0" title="Delivered via email" />
+            )}
             {message.seenAt
-              ? <CheckCheck className="w-3.5 h-3.5 text-green-500 shrink-0" />
+              ? <CheckCheck className="w-3.5 h-3.5 text-green-500 shrink-0" title={message.metadata?.sentViaEmail ? 'Email opened' : 'Seen'} />
               : <Check className="w-3.5 h-3.5 text-muted-foreground/50 shrink-0" />
             }
             {!translation && onTranslate && (

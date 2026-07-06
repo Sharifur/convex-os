@@ -1,5 +1,5 @@
-import { Controller, Post, Get, Body, Param, Query, Req, BadRequestException } from '@nestjs/common';
-import type { FastifyRequest } from 'fastify';
+import { Controller, Post, Get, Body, Param, Query, Req, Res, BadRequestException } from '@nestjs/common';
+import type { FastifyRequest, FastifyReply } from 'fastify';
 import { LivechatService } from './livechat.service';
 import { EnrichmentService } from '../../../common/visitor-enrichment/enrichment.service';
 import { LivechatStreamService } from './livechat-stream.service';
@@ -549,6 +549,25 @@ export class LivechatPublicController {
           ? { id: result.agentMessageId, content: result.reply, status: result.status }
           : { skipped: result.status },
     };
+  }
+
+  // 1x1 transparent GIF served when visitor opens the inactivity email.
+  // Marks sentViaEmail agent messages as seen → green double-check for operator.
+  @Get('session/:id/email-pixel')
+  async emailPixel(@Param('id') id: string, @Res() res: FastifyReply): Promise<void> {
+    // Fire-and-forget — don't block the pixel response on DB writes
+    this.livechat.markEmailOpenedForSession(id).then((seenIds) => {
+      if (seenIds.length) {
+        const seenAt = new Date().toISOString();
+        this.stream.publish(id, { type: 'messages_seen', sessionId: id, messageIds: seenIds, seenAt });
+        this.stream.publishToOperators({ type: 'session_upserted', sessionId: id });
+      }
+    }).catch(() => undefined);
+
+    const PIXEL = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+    res.header('Content-Type', 'image/gif');
+    res.header('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.send(PIXEL);
   }
 
   private pathFromUrl(url: string): string | null {
