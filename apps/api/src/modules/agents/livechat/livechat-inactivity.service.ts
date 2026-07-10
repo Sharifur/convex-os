@@ -53,14 +53,16 @@ export class LivechatInactivityService implements OnApplicationBootstrap, OnAppl
     const resendCutoff = new Date(now.getTime() - RESEND_COOLDOWN_MS);
     const messageWindow = new Date(now.getTime() - RECENT_MESSAGES_WINDOW_MS);
 
-    // Find open sessions where: visitor has email, visitor gone 3+ min (no recent visitor
-    // message), no email recently sent, AND there's a recent agent/operator reply the
-    // visitor may have missed. Use last visitor message time — not last_seen_at — because
-    // operator replies must not reset the visitor absence clock.
+    // Find open/human_taken_over sessions where: visitor has email, visitor gone 3+ min (no
+    // recent visitor message), no email recently sent, AND there's a recent agent/operator
+    // reply the visitor may have missed. Use last visitor message time — not last_seen_at —
+    // because operator replies must not reset the visitor absence clock. human_taken_over is
+    // included because operator replies flip status to it (see operatorReply), so excluding
+    // it silently dropped every operator-handled chat from this sweep.
     const rows = await this.db.db.execute(sql`
       SELECT s.id, s.visitor_email, s.visitor_name
       FROM livechat_sessions s
-      WHERE s.status = 'open'
+      WHERE s.status IN ('open', 'human_taken_over')
         AND s.visitor_email IS NOT NULL
         AND (s.inactivity_email_sent_at IS NULL OR s.inactivity_email_sent_at < ${resendCutoff.toISOString()})
         AND NOT EXISTS (
