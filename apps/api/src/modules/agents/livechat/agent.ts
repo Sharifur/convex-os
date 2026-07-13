@@ -14,6 +14,7 @@ import { LivechatIntentService, type VisitorIntent } from './livechat-intent.ser
 import { LivechatEscalationService } from './livechat-escalation.service';
 import { LivechatKbGuardrailService } from './livechat-kb-guardrail.service';
 import { PushService } from '../../push/push.service';
+import { SettingsService } from '../../settings/settings.service';
 import type {
   IAgent,
   TriggerSpec,
@@ -41,6 +42,55 @@ const DEFAULT_CONFIG: LivechatConfig = {
 
 const FALLBACK_REPLY = 'Let me get someone from the team to help with that — they will reply here shortly.';
 const APOLOGY_REPLY = 'I ran into an issue processing that — please try asking again in a moment.';
+const DEFAULT_AFTER_HOURS_NOTICE = "Heads up — it's outside our business hours right now, so a human reply may take a little longer. I can still help in the meantime!";
+
+interface BusinessHoursConfig {
+  enabled: boolean;
+  timezone: string;
+  start: string; // "HH:MM", 24h
+  end: string;   // "HH:MM", 24h
+  days: number[]; // 0=Sun..6=Sat, days considered open
+  message?: string;
+}
+
+function parseBusinessHours(raw: string | null): BusinessHoursConfig | null {
+  if (!raw) return null;
+  let cfg: Partial<BusinessHoursConfig>;
+  try { cfg = JSON.parse(raw); } catch { return null; }
+  if (!cfg.enabled || !cfg.timezone || !cfg.start || !cfg.end || !Array.isArray(cfg.days)) return null;
+  return cfg as BusinessHoursConfig;
+}
+
+/** Visitor's local weekday (0=Sun) and minutes-since-midnight in the given IANA timezone. */
+function localTimeParts(date: Date, timeZone: string): { day: number; minutes: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const map: Record<string, string> = {};
+  for (const p of parts) map[p.type] = p.value;
+  const weekdayIdx: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const hour = parseInt(map.hour, 10) % 24;
+  const minute = parseInt(map.minute, 10);
+  return { day: weekdayIdx[map.weekday] ?? 0, minutes: hour * 60 + minute };
+}
+
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map((n) => parseInt(n, 10));
+  return (h || 0) * 60 + (m || 0);
+}
+
+function isWithinBusinessHours(cfg: BusinessHoursConfig, local: { day: number; minutes: number }): boolean {
+  if (!cfg.days.includes(local.day)) return false;
+  const start = toMinutes(cfg.start);
+  const end = toMinutes(cfg.end);
+  if (start === end) return true; // open 24h that day
+  if (start < end) return local.minutes >= start && local.minutes < end;
+  return local.minutes >= start || local.minutes < end; // overnight window (e.g. 22:00–06:00)
+}
 
 /** Trailing "?" is the only reliable signal. Regex phrases are too common in closing statements. */
 function looksLikeQuestion(text: string): boolean {
@@ -222,6 +272,7 @@ export class LivechatAgent implements IAgent, OnModuleInit {
     private escalation: LivechatEscalationService,
     private kbGuardrail: LivechatKbGuardrailService,
     private push: PushService,
+    private settings: SettingsService,
   ) {}
 
   onModuleInit() {
@@ -298,6 +349,10 @@ export class LivechatAgent implements IAgent, OnModuleInit {
       await finalizeRun({ ok: false, status: 'error' });
       return { ok: false, status: 'error' };
     }
+
+    await this.maybeSendAfterHoursNotice(input.sessionId, session.afterHoursNoticeSentAt).catch((err) => {
+      this.logger.warn(`session ${input.sessionId}: after-hours notice failed — ${(err as Error).message}`);
+    });
 
     if (session.status === 'human_taken_over') {
       const r = { ok: true, status: 'skipped_taken_over' as const };
@@ -779,6 +834,32 @@ export class LivechatAgent implements IAgent, OnModuleInit {
       createdAt: msg.createdAt.toISOString(),
     });
     return { ok: true, status: 'skipped_needs_human', agentMessageId: msg.id, reply: content };
+  }
+
+  /**
+   * Once per session: if Business Hours is configured and the visitor's current
+   * message lands outside it, drop a one-time system note so they know a human
+   * reply may lag. The AI keeps answering normally either way.
+   */
+  private async maybeSendAfterHoursNotice(sessionId: string, alreadySentAt: Date | null): Promise<void> {
+    if (alreadySentAt) return;
+    const cfg = parseBusinessHours(await this.settings.getDecrypted('livechat_business_hours'));
+    if (!cfg) return;
+
+    const local = localTimeParts(new Date(), cfg.timezone);
+    if (isWithinBusinessHours(cfg, local)) return;
+
+    const content = cfg.message?.trim() || DEFAULT_AFTER_HOURS_NOTICE;
+    const msg = await this.livechat.appendMessage({ sessionId, role: 'system', content });
+    this.stream.publish(sessionId, {
+      type: 'message',
+      sessionId,
+      role: 'system',
+      content,
+      messageId: msg.id,
+      createdAt: msg.createdAt.toISOString(),
+    });
+    await this.livechat.markAfterHoursNoticeSent(sessionId);
   }
 
   private async postApology(sessionId: string): Promise<HandleVisitorMessageResult> {

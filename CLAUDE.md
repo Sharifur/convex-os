@@ -41,10 +41,11 @@
 | CX-008 | Sitemap import with background job + polling | DONE | MED | ~35k | KB import tab gains a 3rd "Sitemap" mode. Accepts a sitemap URL or uploaded XML file (handles sitemap index nesting). Backend parses URLs synchronously, returns jobId immediately, processes up to 5,000 URLs in the background. Frontend polls every 2s and shows a live progress bar with imported/skipped/failed counts. |
 | CX-009 | Add `documentation` KB type + fix pricing/how-it-works escalation | DONE | HIGH | ~25k | New entry type `documentation` — always injected into AI context for the active product (no search ranking required). Fixes: (1) sitemap import defaults to `documentation`; (2) `hasPricingInKb` also checks documentation entries; (3) `PRICE_PATTERN` extended to EUR/GBP/per-month formats; (4) `fetchPagePricingContext` snippet extractor fixed to catch "pricing" keyword windows (was matching pric in gate check but not in extractor). |
 | CX-010 | Inactivity email + email-icon not firing after operator reply | DONE | HIGH | ~15k | Root cause confirmed: `sweep()` query only matched `status = 'open'`, but operator reply (CX-004) sets status to `human_taken_over` and never reverts, so sweep silently skipped every operator-handled chat forever. Fix: query now matches `status IN ('open', 'human_taken_over')`. |
+| CX-011 | Business hours setting + after-hours auto-reply | DONE | HIGH | ~55k | New `livechat_business_hours` setting (JSON: enabled, timezone, start/end, days, custom message) in Settings → General. Visitor's first message outside hours gets a one-time `role:'system'` note that a human reply may lag; AI still answers normally. Fixed a latent widget bug where live-streamed system messages rendered as agent bubbles. |
 
 ### Sprint Stats
-- Total: 4  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 4  /  BLOCKED: 0
-- Tokens: ~120k total
+- Total: 5  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 5  /  BLOCKED: 0
+- Tokens: ~175k total
 
 ### Notes
 - AI reply pipeline: `apps/api/src/modules/agents/livechat/agent.ts` (`handleVisitorMessage`)

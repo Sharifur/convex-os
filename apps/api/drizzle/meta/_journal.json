@@ -673,6 +673,13 @@
       "when": 1749168000000,
       "tag": "0095_support_verify_data",
       "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "6",
+      "when": 1783968116335,
+      "tag": "0096_livechat_after_hours_notice",
+      "breakpoints": true
     }
   ]
 }

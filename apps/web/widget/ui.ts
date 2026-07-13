@@ -1270,14 +1270,18 @@ function connectAndListen(cfg: WidgetConfig, state: any, render: () => void, sit
       if (di >= 0) state.messages.splice(di, 1);
       state.activeDraftId = null;
     }
-    const opName: string | undefined = (event as any).operatorName ?? undefined;
-    // Server resolves the default operator and ships the avatar URL on the
-    // event itself; fall back to the operators roster from /livechat/config
-    // for older bundles still emitting just the name.
-    const opAvatar: string | undefined =
-      ((event as any).operatorAvatarUrl as string | undefined)
-      ?? (opName ? (siteConfig?.operators?.find((op) => op.name === opName)?.avatarUrl ?? undefined) : undefined);
-    pushAgent(state, event.content ?? '', event.messageId, event.role === 'operator', (event as any).attachments, opName, opAvatar);
+    if (event.role === 'system') {
+      pushSystem(state, event.content ?? '', event.messageId);
+    } else {
+      const opName: string | undefined = (event as any).operatorName ?? undefined;
+      // Server resolves the default operator and ships the avatar URL on the
+      // event itself; fall back to the operators roster from /livechat/config
+      // for older bundles still emitting just the name.
+      const opAvatar: string | undefined =
+        ((event as any).operatorAvatarUrl as string | undefined)
+        ?? (opName ? (siteConfig?.operators?.find((op) => op.name === opName)?.avatarUrl ?? undefined) : undefined);
+      pushAgent(state, event.content ?? '', event.messageId, event.role === 'operator', (event as any).attachments, opName, opAvatar);
+    }
     const panel = state.panel as HTMLDivElement | undefined;
     if (panel) hideTyping(panel);
     if (!state.open) {
@@ -1604,8 +1608,8 @@ function pushAgent(state: any, content: string, id: string, asOperator = false, 
   });
   cacheMessages(state.messages);
 }
-function pushSystem(state: any, content: string) {
-  state.messages.push({ id: 'sys-' + Date.now(), role: 'system', content, createdAt: new Date().toISOString() });
+function pushSystem(state: any, content: string, id?: string) {
+  state.messages.push({ id: id || 'sys-' + Date.now(), role: 'system', content, createdAt: new Date().toISOString() });
   cacheMessages(state.messages);
 }
 
