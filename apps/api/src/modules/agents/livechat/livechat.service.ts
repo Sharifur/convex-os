@@ -681,6 +681,13 @@ export class LivechatService implements OnModuleInit {
       .where(eq(livechatSessions.id, sessionId));
   }
 
+  async markAfterHoursNoticeSent(sessionId: string): Promise<void> {
+    await this.db.db
+      .update(livechatSessions)
+      .set({ afterHoursNoticeSentAt: new Date() })
+      .where(eq(livechatSessions.id, sessionId));
+  }
+
   async getQueuePosition(sessionId: string): Promise<number> {
     const rows = await this.db.db.execute(sql`
       SELECT COUNT(*)::int AS position

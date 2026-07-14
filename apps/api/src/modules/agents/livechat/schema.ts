@@ -113,6 +113,7 @@ export const livechatSessions = pgTable(
     inactivityEmailSentAt: timestamp('inactivity_email_sent_at'),
     needsHumanAt: timestamp('needs_human_at'),
     humanAlertSentAt: timestamp('human_alert_sent_at'),
+    afterHoursNoticeSentAt: timestamp('after_hours_notice_sent_at'),
     pageContext: jsonb('page_context'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },

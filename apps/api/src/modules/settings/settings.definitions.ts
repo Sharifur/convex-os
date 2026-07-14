@@ -397,6 +397,13 @@ export const SETTING_DEFINITIONS: Record<string, SettingDefinition> = {
     group: 'general',
     defaultValue: '500',
   },
+  livechat_business_hours: {
+    label: 'Live Chat — Business Hours',
+    description: 'JSON: { enabled, timezone, start ("HH:MM"), end ("HH:MM"), days ([0-6], 0=Sun), message }. When enabled and a visitor\'s first message in a session lands outside these hours, the chat gets a one-time note that a human reply may be delayed. The AI still answers normally.',
+    isSecret: false,
+    group: 'general',
+    defaultValue: '{"enabled":false,"timezone":"UTC","start":"09:00","end":"17:00","days":[1,2,3,4,5],"message":""}',
+  },
 
   // Taskip Internal — read-only DB connection (shared with taskip_trial agent)
   taskip_db_url_readonly: {

@@ -473,6 +473,141 @@ function TimezoneField({ setting, token }: { setting: SettingRow; token: string 
   );
 }
 
+interface BusinessHoursConfig {
+  enabled: boolean;
+  timezone: string;
+  start: string;
+  end: string;
+  days: number[];
+  message?: string;
+}
+
+const DEFAULT_BUSINESS_HOURS: BusinessHoursConfig = {
+  enabled: false,
+  timezone: 'UTC',
+  start: '09:00',
+  end: '17:00',
+  days: [1, 2, 3, 4, 5],
+  message: '',
+};
+
+const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function parseBusinessHours(raw: string): BusinessHoursConfig {
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      enabled: !!parsed.enabled,
+      timezone: parsed.timezone || 'UTC',
+      start: parsed.start || '09:00',
+      end: parsed.end || '17:00',
+      days: Array.isArray(parsed.days) ? parsed.days : [1, 2, 3, 4, 5],
+      message: parsed.message || '',
+    };
+  } catch {
+    return DEFAULT_BUSINESS_HOURS;
+  }
+}
+
+function BusinessHoursField({ setting, token }: { setting: SettingRow; token: string }) {
+  const qc = useQueryClient();
+  const tzs = useMemo(() => getTimezones(), []);
+  const [cfg, setCfg] = useState<BusinessHoursConfig>(() => parseBusinessHours(setting.value));
+
+  const mutation = useMutation({
+    mutationFn: (next: BusinessHoursConfig) => upsertSetting(token, setting.key, JSON.stringify(next)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  });
+
+  const save = (next: BusinessHoursConfig) => {
+    setCfg(next);
+    mutation.mutate(next);
+  };
+
+  const toggleDay = (d: number) => {
+    const days = cfg.days.includes(d) ? cfg.days.filter((x) => x !== d) : [...cfg.days, d].sort();
+    save({ ...cfg, days });
+  };
+
+  return (
+    <div className="py-4 border-b border-border last:border-0">
+      <div className="flex items-center gap-2 mb-0.5">
+        <span className="text-sm font-medium">{setting.label}</span>
+        {mutation.isPending && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+        {!mutation.isPending && mutation.isSuccess && (
+          <span className="text-xs bg-green-500/10 text-green-500 px-1.5 py-0.5 rounded">saved</span>
+        )}
+      </div>
+      {setting.description && <p className="text-xs text-muted-foreground mb-3">{setting.description}</p>}
+
+      <label className="flex items-center gap-2 mb-3 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={cfg.enabled}
+          onChange={(e) => save({ ...cfg, enabled: e.target.checked })}
+          className="rounded border-border"
+        />
+        <span className="text-sm">Enabled — notify visitors who message outside these hours</span>
+      </label>
+
+      <div className={cfg.enabled ? '' : 'opacity-50 pointer-events-none'}>
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <select
+            value={cfg.timezone}
+            onChange={(e) => save({ ...cfg, timezone: e.target.value })}
+            className="bg-muted border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring min-w-[220px]"
+          >
+            {tzs.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+          </select>
+          <input
+            type="time"
+            value={cfg.start}
+            onChange={(e) => save({ ...cfg, start: e.target.value })}
+            className="bg-muted border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+          <span className="text-xs text-muted-foreground">to</span>
+          <input
+            type="time"
+            value={cfg.end}
+            onChange={(e) => save({ ...cfg, end: e.target.value })}
+            className="bg-muted border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+        </div>
+
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {DOW_LABELS.map((label, d) => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => toggleDay(d)}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
+                cfg.days.includes(d)
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <textarea
+          value={cfg.message}
+          onChange={(e) => setCfg({ ...cfg, message: e.target.value })}
+          onBlur={() => save(cfg)}
+          placeholder={`Custom after-hours message (optional) — default: "Heads up — it's outside our business hours right now, so a human reply may take a little longer. I can still help in the meantime!"`}
+          rows={2}
+          className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-none"
+        />
+      </div>
+
+      {mutation.isError && (
+        <p className="text-xs text-destructive mt-2">{(mutation.error as Error)?.message ?? 'Failed to save'}</p>
+      )}
+    </div>
+  );
+}
+
 function GeneralTab({ rows, token }: { rows: SettingRow[]; token: string }) {
   if (!rows.length) return null;
   return (
@@ -485,6 +620,8 @@ function GeneralTab({ rows, token }: { rows: SettingRow[]; token: string }) {
         {rows.map((s) => (
           s.key === 'timezone'
             ? <TimezoneField key={s.key} setting={s} token={token} />
+            : s.key === 'livechat_business_hours'
+            ? <BusinessHoursField key={s.key} setting={s} token={token} />
             : <SettingField key={s.key} setting={s} token={token} />
         ))}
       </div>
